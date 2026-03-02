@@ -132,7 +132,7 @@ Check [this page](https://www.thoughtworks.com/radar/byor) for step by step guid
 
 ## Disclaimer
 
-The fourth ring name has been changed from **Hold** to **Caution** in the recent release. Data using the ring value "hold" (any case) in your sheet, CSV, or JSON is still accepted and displayed as **Caution**.
+The fourth ring name has been changed from **Hold** to **Caution** in the recent release. Data using the ring value "Hold" (any case) in your sheet, CSV, or JSON is still accepted and displayed as **Caution**.
 
 ### More complex usage
 
@@ -171,7 +171,7 @@ export ADOBE_LAUNCH_SCRIPT_URL=[Adobe Launch URL]
 To specify custom ring and/or quadrant names, add the following environment variables with the desired values.
 
 ```
-export RINGS='["Adopt", "Trial", "Assess", "Hold"]'
+export RINGS='["Adopt", "Trial", "Assess", "Caution"]'
 export QUADRANTS='["Techniques", "Platforms", "Tools", "Languages & Frameworks"]'
 ```
 

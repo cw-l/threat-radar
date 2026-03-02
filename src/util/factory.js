@@ -424,8 +424,8 @@ function plotDisclaimer(content) {
   content
     .append('p')
     .attr('class', 'landing-disclaimer-text show-disclaimer')
-    .text(
-      "Note: The Technology Radar ring previously labeled 'Hold' is now called 'Caution'. Please use caution when building or generating your radar graph.",
+    .html(
+      '<b>Note:</b> The Technology Radar ring previously labeled ‘Hold’ is now called ‘Caution’. Please use ‘Caution’ when building or generating your radar graph.'
     )
 }
 
