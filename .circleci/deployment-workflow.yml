@@ -144,7 +144,7 @@ workflows:
             - approve-prod-deployment
   hold-to-caution-qa-deploy:
     when:
-      equal: [ update-hold-ring-name-to-caution, << pipeline.git.branch >> ]
+      equal: [update-hold-ring-name-to-caution, << pipeline.git.branch >>]
     jobs:
       - e2e-tests
       - approve-qa-hold-to-caution:
