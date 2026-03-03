@@ -143,9 +143,8 @@ workflows:
           requires:
             - approve-prod-deployment
   hold-to-caution-qa-deploy:
-    filters:
-      branches:
-        only: update-hold-ring-name-to-caution
+    when:
+      equal: [ update-hold-ring-name-to-caution, << pipeline.git.branch >> ]
     jobs:
       - e2e-tests
       - approve-qa-hold-to-caution:
