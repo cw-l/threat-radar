@@ -1,9 +1,9 @@
-name: Deploy Threat Radar to Pages
+name: Deploy Radar to Pages
 
 on:
   push:
-    branches: ["master", "main"] # Triggers on push to master or main
-  workflow_dispatch: # Allows you to manually trigger it from the Actions tab
+    branches: ["master", "main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,19 +27,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24 # Uses the repo's supported Node version
+          node-version: 24
           cache: 'npm'
 
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build Webpack Static Assets
-        run: npm run build
+      # Running Webpack explicitly using the production config file since the npm script is missing
+      - name: Compile Static Assets with Webpack
+        run: ./node_modules/.bin/webpack --config webpack.prod.js
         env:
           NODE_ENV: production
 
-      # The build step creates a 'dist' folder. We copy the spec/sample data 
-      # files into it so the hosted app can find its default JSON/CSV targets.
       - name: Bundle Sample Data
         run: |
           mkdir -p dist/spec
