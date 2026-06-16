@@ -20,16 +20,8 @@ function renderBanner(renderFullRadar) {
       .attr('class', 'radar-title')
       .append('div')
       .attr('class', 'radar-title__text')
-      .append('h1')
-      .text(document.title)
       .style('cursor', 'pointer')
       .on('click', renderFullRadar)
-
-    header
-      .select('.radar-title')
-      .append('div')
-      .attr('class', 'radar-title__logo')
-      .html('<a href="https://www.thoughtworks.com"> <img src="/images/logo.png" /> </a>')
   }
 }
 
