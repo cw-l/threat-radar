@@ -425,8 +425,8 @@ const Radar = function (size, radar) {
   function drawLegend(order) {
     removeRadarLegend()
 
-    var triangleKey = 'New or moved'
-    var circleKey = 'No change'
+    var triangleKey = 'New'
+    var circleKey = 'Existing'
 
     var container = d3
       .select('svg')
@@ -652,10 +652,7 @@ const Radar = function (size, radar) {
       .attr('class', 'footer-content')
       .append('p')
       .html(
-        'Powered by <a href="https://www.thoughtworks.com"> Thoughtworks</a>. ' +
-          'By using this service you agree to <a href="https://www.thoughtworks.com/radar/tos">Thoughtworks\' terms of use</a>. ' +
-          'You also agree to our <a href="https://www.thoughtworks.com/privacy-policy">privacy policy</a>, which describes how we will gather, use and protect any personal data contained in your public Google Sheet. ' +
-          'This software is <a href="https://github.com/thoughtworks/build-your-own-radar">open source</a> and available for download and self-hosting.',
+        '<strong>Disclaimer:</strong> All data presented "as-is" for informational purposes. No warranties or guarantees of accuracy. Use at your own risk—the authors assume zero liability for any errors or consequences.'
       )
   }
 
