@@ -47,6 +47,8 @@ jobs:
           ./node_modules/.bin/webpack --config webpack.prod.js
         env:
           NODE_ENV: production
+          RINGS: ${{ vars.RINGS }}
+          QUADRANTS: ${{ vars.QUADRANTS }}
 
       # Bundles local sample files and ensures CNAME is preserved in the build output
       - name: Bundle Sample Data and Configurations
