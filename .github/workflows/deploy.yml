@@ -33,16 +33,27 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      # Running Webpack explicitly using the production config file since the npm script is missing
-      - name: Compile Static Assets with Webpack
-        run: ./node_modules/.bin/webpack --config webpack.prod.js
+      # Dynamically determine if a custom domain is being used
+      - name: Detect Asset Path & Compile
+        run: |
+          if [ -f "CNAME" ]; then
+            echo "Custom domain detected via CNAME file. Setting ASSET_PATH to /"
+            export ASSET_PATH="/"
+          else
+            echo "No custom domain detected. Setting ASSET_PATH to /${{ github.event.repository.name }}/"
+            export ASSET_PATH="/${{ github.event.repository.name }}/"
+          fi
+          
+          ./node_modules/.bin/webpack --config webpack.prod.js
         env:
           NODE_ENV: production
 
-      - name: Bundle Sample Data
+      # Bundles local sample files and ensures CNAME is preserved in the build output
+      - name: Bundle Sample Data and Configurations
         run: |
           mkdir -p dist/spec
           cp -r spec/* dist/spec/ || true
+          if [ -f "CNAME" ]; then cp CNAME dist/; fi
 
       - name: Upload Static Artifacts
         uses: actions/upload-pages-artifact@v3
