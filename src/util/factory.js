@@ -333,7 +333,11 @@ const Factory = function () {
 
     const domainName = DomainName(window.location.search.substring(1))
 
-    const paramId = getDocumentOrSheetId()
+    let paramId = getDocumentOrSheetId()
+    if (!paramId) {
+      paramId = './data/singapore_maritime_threat_radar_may_2026_v2.csv'
+    }
+    
     if (paramId && paramId.endsWith('.csv')) {
       sheet = CSVDocument(paramId)
       sheet.init().build()
