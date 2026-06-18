@@ -335,7 +335,7 @@ const Factory = function () {
 
     let paramId = getDocumentOrSheetId()
     if (!paramId) {
-      paramId = './data/singapore_maritime_threat_radar_may_2026_v2.csv'
+      paramId = './data/maritime_may_2026.csv'
     }
     
     if (paramId && paramId.endsWith('.csv')) {
