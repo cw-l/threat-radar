@@ -1,0 +1,41 @@
+name: Weekly Threat Radar CSV Generation
+
+on:
+  schedule:
+    # Every Monday at 01:00 UTC. Adjust the cron expression if you want a
+    # different day/time -- this just needs to run once every 7 days to
+    # match the prompt's rolling 7-day window.
+    - cron: "0 1 * * 1"
+  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate threat radar CSV
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # GEMINI_MODEL: gemini-2.5-flash   # uncomment to override the default
+        run: python scripts/generate_csv.py
+
+      - name: Commit and push new CSV
+        run: |
+          git config user.name "threat-radar-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/*.csv
+          git diff --cached --quiet || git commit -m "Weekly threat radar CSV ($(date -u +%Y-%m-%d))"
+          git push  
