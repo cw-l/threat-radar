@@ -29,7 +29,7 @@ jobs:
       - name: Generate threat radar CSV
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # GEMINI_MODEL: gemini-2.5-flash   # uncomment to override the default
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: python scripts/generate_csv.py
 
       - name: Commit and push new CSV
