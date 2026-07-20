@@ -49,7 +49,7 @@ def call_gemini(prompt: str) -> str:
     api_key = os.environ["GEMINI_API_KEY"]
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
+        "tools": [{"googleSearch": {}}],
     }
     resp = requests.post(
         API_URL, params={"key": api_key}, json=payload, timeout=120
