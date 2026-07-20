@@ -22,7 +22,7 @@ import os
 import requests
 
 # ---- config -----------------------------------------------------------
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 API_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 )
@@ -49,11 +49,17 @@ def call_gemini(prompt: str) -> str:
     api_key = os.environ["GEMINI_API_KEY"]
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"googleSearch": {}}],
+        "tools": [{"google_search": {}}],
     }
     resp = requests.post(
         API_URL, params={"key": api_key}, json=payload, timeout=120
     )
+    if resp.status_code == 429:
+        # Surface the actual quota that was hit instead of a bare 429 --
+        # the response body usually names which limit (RPM/RPD/grounding)
+        # and Retry-After may tell you how long to back off.
+        print("Rate limited. Response body:", resp.text)
+        print("Retry-After header:", resp.headers.get("Retry-After"))
     resp.raise_for_status()
     data = resp.json()
     try:
