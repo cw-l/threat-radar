@@ -17,24 +17,26 @@ import google.generativeai as genai
 # CONFIGURATION
 # ============================================================================
 
-# API Keys (injected via GitHub Secrets)
+# API Keys (injected via Environment / GitHub Secrets)
 BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 
 # File paths
 CSV_PATH = "data/maritime_latest.csv"
 CSV_HEADERS = ["name", "ring", "quadrant", "isNew", "description"]
 
-# Search & Text configuration
+# Search configuration
 SEARCH_QUERIES = [
     'site:cisa.gov OR site:dragos.com OR site:recordedfuture.com "maritime" OR "shipping" OR "port" cyber threat',
     'site:singcert.gov.sg OR site:maritimeisac.com "cyber attack" OR "threat actor"',
     '"maritime cyber" OR "port cyber" OR "shipping cyber" ransomware OR APT OR breach'
 ]
-MAX_SEARCH_RESULTS_PER_QUERY = 5
-MAX_JINA_TEXT_LENGTH = 6000      # Limit per individual article
-MAX_TOTAL_JINA_LENGTH = 30000    # Global cap on combined text to prevent API timeouts (504s)
+MAX_SEARCH_RESULTS_PER_QUERY = 4
+
+# CONTEXT LENGTH CAPS (Prevents 504 Gateway Timeouts by keeping requests fast)
+MAX_JINA_TEXT_PER_ARTICLE = 3500    # Chars per article (~800 tokens)
+MAX_TOTAL_CONTEXT_LENGTH = 28000    # Total chars cap (~7000 tokens max)
 
 # ============================================================================
 # EXISTING THREATS DEDUPLICATION
@@ -65,7 +67,7 @@ def load_existing_threats() -> List[str]:
 # BRAVE SEARCH API
 # ============================================================================
 
-def search_brave(query: str, max_results: int = 5) -> List[str]:
+def search_brave(query: str, max_results: int = 4) -> List[str]:
     """Search Brave Search API and return list of URLs."""
     if not BRAVE_SEARCH_API_KEY:
         print("ERROR: BRAVE_SEARCH_API_KEY not set")
@@ -85,7 +87,7 @@ def search_brave(query: str, max_results: int = 5) -> List[str]:
     }
     
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response = requests.get(url, headers=headers, params=params, timeout=20)
         response.raise_for_status()
         data = response.json()
         
@@ -124,13 +126,13 @@ def fetch_article_text(url: str) -> str:
     jina_url = f"https://r.jina.ai/{url}"
     
     try:
-        response = requests.get(jina_url, timeout=15)
+        response = requests.get(jina_url, timeout=12)
         
         if response.status_code == 200:
-            text = response.text
-            # Limit individual article length
-            if len(text) > MAX_JINA_TEXT_LENGTH:
-                text = text[:MAX_JINA_TEXT_LENGTH] + "\n\n[TRUNCATED]"
+            text = response.text.strip()
+            # Truncate long individual articles
+            if len(text) > MAX_JINA_TEXT_PER_ARTICLE:
+                text = text[:MAX_JINA_TEXT_PER_ARTICLE] + "\n[TRUNCATED ARTICLE]"
             return text
         else:
             print(f"Jina Reader failed for {url}: HTTP {response.status_code}")
@@ -141,29 +143,25 @@ def fetch_article_text(url: str) -> str:
         return ""
 
 def fetch_all_articles(urls: List[str]) -> str:
-    """Fetch all articles and combine into single text block with global length capping."""
+    """Fetch all articles, enforcing total context length caps."""
     articles = []
     total_length = 0
     
     for i, url in enumerate(urls, 1):
-        if total_length >= MAX_TOTAL_JINA_LENGTH:
-            print(f"Reached global article text cap ({MAX_TOTAL_JINA_LENGTH} chars). Skipping remaining URLs.")
+        if total_length >= MAX_TOTAL_CONTEXT_LENGTH:
+            print(f"Reached total context length cap ({MAX_TOTAL_CONTEXT_LENGTH} chars). Skipping remaining URLs.")
             break
             
         print(f"Fetching article {i}/{len(urls)}: {url}")
         text = fetch_article_text(url)
         
-        if text:
-            # Enforce global combined length cap to prevent oversized prompts
-            if total_length + len(text) > MAX_TOTAL_JINA_LENGTH:
-                remaining_budget = MAX_TOTAL_JINA_LENGTH - total_length
-                text = text[:remaining_budget] + "\n\n[TRUNCATED DUE TO GLOBAL SIZE CAP]"
-            
-            articles.append(f"--- SOURCE {i}: {url} ---\n{text}")
-            total_length += len(text)
+        if text and len(text) > 150:  # Skip empty or failure pages
+            formatted_article = f"--- SOURCE {i}: {url} ---\n{text}"
+            articles.append(formatted_article)
+            total_length += len(formatted_article)
     
     combined = "\n\n".join(articles)
-    print(f"Combined article text length: {len(combined)} characters")
+    print(f"Combined article payload: {len(combined)} characters across {len(articles)} sources.")
     return combined
 
 # ============================================================================
@@ -187,15 +185,9 @@ INSTRUCTION DATE: {instruction_date}
 TIME WINDOW: {start_date} through {instruction_date} inclusive. Only include incidents
 with a confirmed/reported date inside this 7-day window.
 
-SOURCES: The raw text below has been pre-fetched from real, verifiable reporting sources
-including CISA advisories, FBI/IC3 alerts, ISACs (Maritime-ISAC, IT-ISAC, etc.), national
-CERTs (e.g. SingCERT), reputable threat-intel vendors, mainstream/trade cybersecurity news,
-and credibly reported dark web/forum/Reddit chatter.
-
 TA SCOPE: Only include actors falling into one of these categories:
 Hacktivists, Cyber criminal gangs, State-sponsored actors, APTs, Cyber
-terrorists, Cyber mercenaries. Exclude insider threats and generic
-unattributed script-kiddie noise.
+terrorists, Cyber mercenaries. Exclude insider threats and generic unattributed noise.
 
 TARGET RELEVANCE: Only include activity plausibly relevant to Singapore's
 maritime and port ecosystem — direct attacks on Singapore-linked maritime/port
@@ -206,75 +198,35 @@ shipping-sector campaigns with credible spillover relevance.
 EXISTING THREATS IN DATABASE (DO NOT DUPLICATE):
 {existing_threats_str}
 
-OUTPUT SCHEMA (JSON array of objects, which will be converted to CSV with these 5 columns):
+OUTPUT SCHEMA (JSON array of objects with these 5 keys):
 name, ring, quadrant, isNew, description
 
 FIELD RULES:
-- name: Threat actor/group name. Include known aliases in parentheses,
-  e.g. "Volt Typhoon (BRONZE SILHOUETTE)".
-- ring: "Asia" or "ROTW" (Rest of World). Asia = campaign directly targets
-  Singapore/APAC maritime infrastructure. ROTW = campaign is global/elsewhere
-  but relevant to Singapore's maritime supply chain or interests.
-- quadrant: "CIIs" (own critical infrastructure — port authority, terminal
-  operating systems, telecom backbone), "My-Suppliers" (third-party vendors —
-  ERP, logistics software, satcom, ECDIS, freight/bunkering providers), or
-  "All Others" (broader/global relevance, not directly own-CII or own-supplier).
-- isNew: Set to true for every row (fixed default for now).
+- name: Threat actor/group name. Include known aliases in parentheses, e.g. "Volt Typhoon (BRONZE SILHOUETTE)".
+- ring: "Asia" or "ROTW" (Rest of World). Asia = campaign directly targets Singapore/APAC maritime infrastructure. ROTW = campaign is global/elsewhere but relevant.
+- quadrant: "CIIs" (own critical infrastructure), "My-Suppliers" (third-party vendors — ERP, satcom, ECDIS, freight), or "All Others" (broader global relevance).
+- isNew: Set to true for every row.
 - description: One HTML block per incident:
   <b>YYYY-MM-DD | Short Campaign Title</b><br>Target: ...<br>Vector: ...<br>Impact: ...
-  If one actor has multiple incidents in this window, list each as its own
-  dated block, newest first, separated by <br><br><hr><br>.
-
-ROW GRANULARITY: One row per threat actor per unique (ring, quadrant)
-combination. If an actor's incidents span more than one ring or quadrant,
-create a separate row per combination, with only that combination's
-incidents in its description.
+  If one actor has multiple incidents in this window, separate them with <br><br><hr><br>.
 
 JSON FORMATTING RULES:
 - Output ONLY a valid JSON array of objects.
 - Do not include markdown formatting (no ```json), no commentary, no explanation.
 - Use <br> for line breaks inside description — never literal newlines.
-- Escape internal double quotes in strings by doubling them ("").
+- Escape internal double quotes in strings.
 - Boolean values must be true/false (lowercase, no quotes).
 
-REFERENCE FORMAT EXAMPLE (for structure only — this is a PRIOR period's data,
-do not reuse, extend, re-date, or treat any of it as current. It exists only
-to show you the exact schema, HTML formatting style, and multi-incident
-<hr> pattern to follow):
-
-[
-  {{
-    "name": "Volt Typhoon (BRONZE SILHOUETTE)",
-    "ring": "Asia",
-    "quadrant": "CIIs",
-    "isNew": true,
-    "description": "<b>2026-05-18 | Active Pre-Positioning & LotL Activity</b><br>Target: Critical infrastructure Operational Technology (OT) networks in Singapore, focused heavily on port automation control systems supporting PSA and Jurong Port layouts.<br>Vector: Stealth-first Living-off-the-land (LotL) execution exploiting unpatched edge networking components to harvest internal domain credentials.<br>Impact: Silent establishment of persistent access footprints inside Terminal Operating Systems (TOS)."
-  }},
-  {{
-    "name": "Akira Ransomware Group",
-    "ring": "ROTW",
-    "quadrant": "My-Suppliers",
-    "isNew": true,
-    "description": "<b>2026-05-12 | Vendor Supply Chain Extortion</b><br>Target: Third-party cloud-native Maritime Enterprise Resource Planning (ERP) and fleet logistics software providers serving Singapore hub networks.<br>Vector: Helpdesk social engineering and high-frequency MFA fatigue attacks to compromise administrator portals.<br>Impact: Quiet data-theft campaign exfiltrating over 1TB of cargo manifests and custom clearance pipelines."
-  }}
-]
-
-ANTI-HALLUCINATION RULE (critical): Do not invent CVEs, dates, victim names,
-or incident details. If you're not confident an incident is real and falls
-within the stated window, leave it out. Returning 2 accurate rows is far
-better than 10 rows padded with fabricated detail. If you find no verifiable
-incidents for this window, return an empty array: []
-
-Now analyze the following pre-fetched threat intelligence reports and generate the JSON array for the window: {start_date} to {instruction_date}.
+ANTI-HALLUCINATION RULE (critical): Do not invent CVEs, dates, victim names, or incident details.
+If you find no verifiable incidents for this window, return an empty array: []
 
 RAW THREAT INTELLIGENCE REPORTS TO ANALYZE:
 {jina_text}
 """
-    
     return prompt
 
 def call_gemini(prompt: str) -> str:
-    """Call Gemini API with JSON mode, token capping, extended timeout, and exponential backoff retry logic."""
+    """Call Gemini API with JSON mode, token caps, and retry logic."""
     if not GEMINI_API_KEY:
         print("ERROR: GEMINI_API_KEY not set")
         return "[]"
@@ -282,11 +234,11 @@ def call_gemini(prompt: str) -> str:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # 1. Enforce JSON mode and token cap for fast, bounded generation
+        # 1. ENFORCE JSON MODE, TEMPERATURE & MAX OUTPUT TOKENS
         generation_config = {
             "response_mime_type": "application/json",
-            "temperature": 0.1,         # Low temperature for deterministic output
-            "max_output_tokens": 2500   # Prevents runaway output generation and 504 timeouts
+            "temperature": 0.1,
+            "max_output_tokens": 2500
         }
         
         model = genai.GenerativeModel(
@@ -294,22 +246,20 @@ def call_gemini(prompt: str) -> str:
             generation_config=generation_config
         )
         
-        # 2. Configure retries with exponential backoff
         max_retries = 3
-        base_delay = 5  # Initial backoff delay in seconds (5s, 10s, 20s)
+        base_delay = 4  # seconds
         
         for attempt in range(max_retries):
             try:
-                print(f"Calling Gemini API (Attempt {attempt + 1}/{max_retries})...")
+                print(f"Calling Gemini API ({GEMINI_MODEL}) - Attempt {attempt + 1}/{max_retries}...")
                 
-                # 3. Increase client-side timeout to 120s
                 response = model.generate_content(
                     prompt,
-                    request_options={"timeout": 120}
+                    request_options={"timeout": 60}
                 )
                 
                 if response.text:
-                    print(f"Gemini response length: {len(response.text)} characters")
+                    print(f"Gemini response received ({len(response.text)} characters)")
                     return response.text
                 else:
                     print("ERROR: Gemini returned empty response")
@@ -317,26 +267,19 @@ def call_gemini(prompt: str) -> str:
                     
             except Exception as e:
                 error_str = str(e).lower()
-                # Detect transient network/gateway/timeout error codes
-                transient_keywords = ["504", "deadline", "503", "502", "429", "resourceexhausted", "unavailable", "timeout"]
-                is_transient = any(kw in error_str for kw in transient_keywords)
-                
-                if is_transient and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)  # 5s, 10s, 20s
-                    print(f"Transient error detected ({e}). Retrying in {delay} seconds...")
+                if any(err in error_str for err in ["504", "deadline", "503", "502", "resource_exhausted"]):
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Transient API/Gateway error ({e}). Retrying in {delay}s...")
                     time.sleep(delay)
                 else:
-                    # Non-transient error or retries exhausted
-                    print(f"Gemini API error on attempt {attempt + 1}: {e}")
-                    if not is_transient:
-                        # Fail fast for client configuration or auth errors
-                        return "[]"
+                    print(f"Gemini API Fatal Error: {e}")
+                    return "[]"
         
         print("ERROR: Max retries exceeded for Gemini API")
         return "[]"
         
     except Exception as e:
-        print(f"Gemini API configuration error: {e}")
+        print(f"Gemini configuration error: {e}")
         return "[]"
 
 # ============================================================================
@@ -344,14 +287,14 @@ def call_gemini(prompt: str) -> str:
 # ============================================================================
 
 def parse_and_write_csv(json_text: str):
-    """Parse JSON response and write to CSV with robust cleaning."""
+    """Parse JSON response and write to CSV."""
     
-    # Clean up accidental markdown code fences
+    # Strip accidental markdown formatting
     json_text = json_text.strip()
+    if json_text.startswith("```json"):
+        json_text = json_text[7:]
     if json_text.startswith("```"):
-        first_newline = json_text.find("\n")
-        if first_newline != -1:
-            json_text = json_text[first_newline + 1:]
+        json_text = json_text[3:]
     if json_text.endswith("```"):
         json_text = json_text[:-3]
     json_text = json_text.strip()
@@ -365,7 +308,7 @@ def parse_and_write_csv(json_text: str):
         
         print(f"Parsed {len(data)} threat entries from JSON")
         
-        # Ensure output directory exists
+        # Ensure target directory exists
         os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
         
         # Write CSV
@@ -374,7 +317,6 @@ def parse_and_write_csv(json_text: str):
             writer.writeheader()
             
             for entry in data:
-                # Validate and clean entry fields
                 row = {
                     "name": entry.get("name", "Unknown"),
                     "ring": entry.get("ring", "ROTW"),
@@ -388,9 +330,9 @@ def parse_and_write_csv(json_text: str):
         
     except json.JSONDecodeError as e:
         print(f"ERROR: Failed to parse JSON: {e}")
-        print(f"Raw response snippet: {json_text[:300]}...")
+        print(f"Raw response preview: {json_text[:300]}")
         
-        # Fallback: Write empty CSV with headers
+        # Fallback: write empty CSV headers
         os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
         with open(CSV_PATH, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
@@ -406,7 +348,7 @@ def main():
     print("Maritime Cyber Threat Intelligence CSV Generator")
     print("=" * 60)
     
-    # Calculate date window
+    # Date window calculation
     instruction_date = datetime.now()
     start_date = instruction_date - timedelta(days=7)
     instruction_date_str = instruction_date.strftime("%Y-%m-%d")
@@ -415,12 +357,12 @@ def main():
     print(f"Time window: {start_date_str} to {instruction_date_str}")
     print()
     
-    # Step 1: Load existing threats for deduplication
+    # Step 1: Deduplication baseline
     print("Step 1: Loading existing threats...")
     existing_threats = load_existing_threats()
     print()
     
-    # Step 2: Search for URLs via Brave
+    # Step 2: Search URLs
     print("Step 2: Searching for threat intelligence URLs...")
     urls = get_all_urls()
     
@@ -433,7 +375,7 @@ def main():
         return
     print()
     
-    # Step 3: Fetch full article text via Jina Reader
+    # Step 3: Fetch Articles
     print("Step 3: Fetching full article text...")
     jina_text = fetch_all_articles(urls)
     
@@ -446,14 +388,14 @@ def main():
         return
     print()
     
-    # Step 4: Generate prompt and call Gemini
+    # Step 4: Prompting & API Call
     print("Step 4: Generating prompt and calling Gemini...")
     prompt = generate_prompt(instruction_date_str, start_date_str, 
                             existing_threats, jina_text)
     json_response = call_gemini(prompt)
     print()
     
-    # Step 5: Parse JSON and write CSV
+    # Step 5: CSV Parsing
     print("Step 5: Parsing JSON and writing CSV...")
     parse_and_write_csv(json_response)
     print()
