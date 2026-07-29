@@ -30,7 +30,7 @@ jobs:
         
       - name: Generate Threat Intelligence CSV
         env:
-          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scripts/generate_threat_profile.py
 
