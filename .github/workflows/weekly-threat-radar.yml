@@ -32,10 +32,15 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python generate_threat_profile.py
-        
+        run: python scripts/generate_threat_profile.py
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
       - name: Commit and push updated CSV
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: weekly maritime threat radar update"
-          file_pattern: "data/maritime_latest.csv"
+        run: |
+          git add data/maritime_latest.csv
+          git diff --staged --quiet || git commit -m "chore: weekly maritime threat radar update"
+          git push
