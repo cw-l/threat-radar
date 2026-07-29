@@ -17,8 +17,9 @@ import google.generativeai as genai
 # ============================================================================
 
 # API Keys (injected via GitHub Secrets)
-BRAVE_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY")
+BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 # File paths
 CSV_PATH = "data/maritime_latest.csv"
@@ -63,16 +64,16 @@ def load_existing_threats() -> List[str]:
 # ============================================================================
 
 def search_brave(query: str, max_results: int = 5) -> List[str]:
-    """Search Brave API and return list of URLs."""
-    if not BRAVE_API_KEY:
-        print("ERROR: BRAVE_API_KEY not set")
+    """Search Brave Search API and return list of URLs."""
+    if not BRAVE_SEARCH_API_KEY:
+        print("ERROR: BRAVE_SEARCH_API_KEY not set")
         return []
     
     url = "https://api.search.brave.com/res/v1/web/search"
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
-        "X-Subscription-Token": BRAVE_API_KEY
+        "X-Subscription-Token": BRAVE_SEARCH_API_KEY
     }
     params = {
         "q": query,
@@ -275,7 +276,7 @@ def call_gemini(prompt: str) -> str:
         }
         
         model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-exp",
+            model_name=GEMINI_MODEL,
             generation_config=generation_config
         )
         
