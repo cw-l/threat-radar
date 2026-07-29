@@ -17,27 +17,66 @@ import google.generativeai as genai
 # CONFIGURATION
 # ============================================================================
 
-# API Keys (injected via Environment / GitHub Secrets)
+# API Keys (injected via Environment Variables / GitHub Secrets)
 BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-# Supported active models (gemini-1.5-flash is deprecated and returns 404)
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # File paths
 CSV_PATH = "data/maritime_latest.csv"
 CSV_HEADERS = ["name", "ring", "quadrant", "isNew", "description"]
 
-# Search & Text configuration
+# Search configuration
 SEARCH_QUERIES = [
     'site:cisa.gov OR site:dragos.com OR site:recordedfuture.com "maritime" OR "shipping" OR "port" cyber threat',
     'site:singcert.gov.sg OR site:maritimeisac.com "cyber attack" OR "threat actor"',
     '"maritime cyber" OR "port cyber" OR "shipping cyber" ransomware OR APT OR breach'
 ]
 MAX_SEARCH_RESULTS_PER_QUERY = 5
-MAX_JINA_TEXT_LENGTH = 3500       # Truncate boilerplate per article
-ARTICLES_PER_GEMINI_BATCH = 3     # Batch articles to avoid 504 timeouts
+MAX_JINA_TEXT_LENGTH = 6000  # Limit per article to prevent prompt bloat
+ARTICLES_PER_BATCH = 3       # Group articles into batches to avoid 504 timeouts
+
+# ============================================================================
+# MODEL RESOLVER
+# ============================================================================
+
+_CACHED_MODEL_NAME = None
+
+def get_working_model_name(requested_model: str) -> str:
+    """Dynamically discover a supported Gemini model to avoid 404 errors."""
+    global _CACHED_MODEL_NAME
+    if _CACHED_MODEL_NAME:
+        return _CACHED_MODEL_NAME
+
+    # Priority candidate list
+    candidates = [
+        requested_model,
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-flash-latest"
+    ]
+    
+    # Filter out empty or duplicate entries
+    seen = set()
+    unique_candidates = [m for m in candidates if m and not (m in seen or seen.add(m))]
+
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+        clean_available = {m.replace("models/", ""): m for m in available_models}
+
+        for cand in unique_candidates:
+            clean_cand = cand.replace("models/", "")
+            if clean_cand in clean_available:
+                _CACHED_MODEL_NAME = clean_available[clean_cand]
+                print(f"Verified available Gemini model: {_CACHED_MODEL_NAME}")
+                return _CACHED_MODEL_NAME
+    except Exception as e:
+        print(f"Warning: Could not list models ({e}). Falling back to requested: {requested_model}")
+
+    _CACHED_MODEL_NAME = requested_model
+    return requested_model
 
 # ============================================================================
 # EXISTING THREATS DEDUPLICATION
@@ -113,7 +152,6 @@ def get_all_urls() -> List[str]:
         urls = search_brave(query, MAX_SEARCH_RESULTS_PER_QUERY)
         all_urls.extend(urls)
     
-    # Remove duplicates while preserving order
     unique_urls = list(dict.fromkeys(all_urls))
     print(f"Total unique URLs to process: {len(unique_urls)}")
     return unique_urls
@@ -142,204 +180,194 @@ def fetch_article_text(url: str) -> str:
         print(f"Jina Reader error for {url}: {e}")
         return ""
 
-def fetch_all_articles_batched(urls: List[str], batch_size: int = 3) -> List[str]:
-    """Fetch all articles and return them grouped in small batch text blocks."""
-    fetched_articles = []
+def fetch_all_articles(urls: List[str], current_date_str: str) -> List[Dict[str, str]]:
+    """Fetch articles and return list of objects with metadata."""
+    articles = []
     
     for i, url in enumerate(urls, 1):
         print(f"Fetching article {i}/{len(urls)}: {url}")
         text = fetch_article_text(url)
-        if text:
-            fetched_articles.append(f"--- SOURCE {i}: {url} ---\n{text}")
+        
+        if text and len(text.strip()) > 100:
+            articles.append({
+                "url": url,
+                "fetched_date": current_date_str,
+                "text": text
+            })
     
-    # Chunk into smaller batches
-    batches = []
-    for i in range(0, len(fetched_articles), batch_size):
-        chunk = fetched_articles[i:i + batch_size]
-        batches.append("\n\n".join(chunk))
-    
-    print(f"Grouped {len(fetched_articles)} articles into {len(batches)} batches for Gemini.")
-    return batches
+    print(f"Successfully fetched {len(articles)} articles.")
+    return articles
 
 # ============================================================================
 # GEMINI API
 # ============================================================================
 
-def generate_prompt(instruction_date: str, start_date: str, 
+def generate_prompt(instruction_date: str, day_of_week: str, start_date: str, 
                    existing_threats: List[str], jina_text: str) -> str:
-    """Generate the complete prompt for Gemini."""
+    """Generate the optimized prompt for Gemini with flexible date context."""
     
     existing_threats_str = ", ".join(existing_threats) if existing_threats else "None"
     
     prompt = f"""ROLE: You are a maritime cyber-threat-intelligence analyst producing structured
-input data for a "Threat Radar" (a ThoughtWorks Tech-Radar-style visualization)
-tracking cyber threats to Singapore's maritime sector.
+input data for a "Threat Radar" tracking cyber threats to Singapore's maritime sector.
 
 TASK: Analyze the provided threat intelligence reports and extract threat-actor activity
-from the past 7 days. Output it strictly as a JSON array.
+reported in the recent 7-day window ({start_date} through {instruction_date}).
+Output the result strictly as a JSON array of objects.
 
-INSTRUCTION DATE: {instruction_date}
-TIME WINDOW: {start_date} through {instruction_date} inclusive. Only include incidents
-with a confirmed/reported date inside this 7-day window.
+CURRENT DATE CONTEXT:
+- Today is: {instruction_date} ({day_of_week})
+- Time Window: {start_date} through {instruction_date} inclusive.
 
-SOURCES: Raw text pre-fetched from CISA, CERTs, threat-intel vendors, and news.
+DATE REASONING RULES:
+- Articles may use relative dates like "yesterday", "this week", "last Tuesday", "recently", "July 25", or give no exact day.
+- Treat any threat or incident reported in these articles as occurring within the 7-day window UNLESS the text explicitly states it occurred in a prior year or earlier month (e.g. 2024 or 2025).
+- For the incident date in the description field, use the date explicitly mentioned in the text (e.g. YYYY-MM-DD). If no exact date is present, estimate it based on the report context or default to {instruction_date}.
 
-TA SCOPE: Hacktivists, Cyber criminal gangs, State-sponsored actors, APTs, Cyber terrorists, Cyber mercenaries. Exclude insider threats and unattributed script-kiddie noise.
+TARGET RELEVANCE:
+Include activity plausibly relevant to Singapore's maritime & port ecosystem — direct attacks on Singapore-linked maritime infrastructure, attacks on maritime supply chain vendors (ERP, satcom, logistics, ECDIS), or global shipping sector campaigns.
 
-TARGET RELEVANCE: Only include activity plausibly relevant to Singapore's maritime/port ecosystem or global maritime supply chain with credible spillover.
+TA SCOPE:
+Hacktivists, Cyber criminal gangs, State-sponsored actors, APTs, Cyber terrorists, Ransomware groups. Exclude generic unattributed noise.
 
-EXISTING THREATS IN DATABASE (DO NOT DUPLICATE):
+EXISTING THREATS IN DATABASE (DO NOT DUPLICATE EXISTING NAMES UNLESS NEW INCIDENT):
 {existing_threats_str}
 
-OUTPUT SCHEMA (JSON array of objects with these 5 fields):
-name, ring, quadrant, isNew, description
+OUTPUT SCHEMA (JSON array of objects):
+[
+  {{
+    "name": "Threat actor group name (aliases)",
+    "ring": "Asia" or "ROTW",
+    "quadrant": "CIIs" or "My-Suppliers" or "All Others",
+    "isNew": true,
+    "description": "<b>YYYY-MM-DD | Short Title</b><br>Target: ...<br>Vector: ...<br>Impact: ..."
+  }}
+]
 
 FIELD RULES:
-- name: Threat actor/group name (e.g. "Volt Typhoon (BRONZE SILHOUETTE)").
-- ring: "Asia" or "ROTW" (Rest of World).
-- quadrant: "CIIs", "My-Suppliers", or "All Others".
+- ring: "Asia" = targets Singapore/APAC maritime infrastructure. "ROTW" = Rest of World/Global relevance.
+- quadrant: "CIIs" (Port authority, terminal operating systems), "My-Suppliers" (vendors, ERP, satcom, freight tech), "All Others" (general maritime).
 - isNew: true
-- description: One HTML block per incident:
-  <b>YYYY-MM-DD | Short Campaign Title</b><br>Target: ...<br>Vector: ...<br>Impact: ...
-  If one actor has multiple incidents, separate each with <br><br><hr><br>.
+- description: Single line HTML string. Use <br> for line breaks — NEVER literal newlines inside strings.
 
-JSON FORMATTING RULES:
-- Output ONLY a valid JSON array of objects.
-- Do not include markdown formatting (no ```json).
-- Use <br> for line breaks inside description.
-- Boolean values must be true/false (lowercase).
-
-ANTI-HALLUCINATION RULE: Do not invent details. If no verifiable incidents exist in this batch for the window, return an empty array: []
+FORMATTING MANDATE:
+- Output ONLY a valid JSON array.
+- Do not wrap in ```json markdown block.
+- If no relevant incidents are found, return empty array: []
 
 RAW THREAT INTELLIGENCE REPORTS TO ANALYZE:
 {jina_text}
 """
     return prompt
 
-def call_gemini_single_batch(prompt: str) -> str:
-    """Call Gemini API with timeouts, retry logic, and model fallback."""
+def call_gemini(prompt: str) -> str:
+    """Call Gemini API with dynamic model selection, retry backoff, and timeouts."""
     if not GEMINI_API_KEY:
         print("ERROR: GEMINI_API_KEY not set")
         return "[]"
     
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    generation_config = {
-        "response_mime_type": "application/json",
-        "temperature": 0.1,
-        "max_output_tokens": 2000
-    }
-    
-    # Try preferred model first, then fallbacks
-    models_to_try = [DEFAULT_GEMINI_MODEL] + [m for m in FALLBACK_MODELS if m != DEFAULT_GEMINI_MODEL]
-    
-    for current_model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(
-                model_name=current_model_name,
-                generation_config=generation_config
-            )
-            
-            max_retries = 3
-            base_delay = 5
-            
-            for attempt in range(max_retries):
-                try:
-                    print(f"Calling Gemini API ({current_model_name}) - Attempt {attempt + 1}/{max_retries}...")
-                    
-                    response = model.generate_content(
-                        prompt,
-                        request_options={"timeout": 120}  # 2-minute timeout
-                    )
-                    
-                    if response.text:
-                        print(f"Gemini response length: {len(response.text)} characters")
-                        return response.text
-                    else:
-                        print("Warning: Gemini returned empty response")
-                        return "[]"
-                        
-                except Exception as e:
-                    error_str = str(e).lower()
-                    
-                    # If 404 Model Not Found, break inner loop to try fallback model
-                    if "404" in error_str or "not found" in error_str:
-                        print(f"Model {current_model_name} not available (404). Trying fallback model...")
-                        break
-                    
-                    # Handle transient timeouts and gateway errors
-                    if any(code in error_str for code in ["504", "deadline", "503", "502"]):
-                        delay = base_delay * (2 ** attempt)
-                        print(f"Transient error detected ({e}). Retrying in {delay} seconds...")
-                        time.sleep(delay)
-                    else:
-                        print(f"Gemini API error on {current_model_name}: {e}")
-                        return "[]"
-                        
-        except Exception as e:
-            print(f"Configuration error for {current_model_name}: {e}")
-            
-    print("ERROR: All Gemini models failed or were unavailable.")
-    return "[]"
-
-# ============================================================================
-# CSV GENERATION & MERGING
-# ============================================================================
-
-def parse_json_response(json_text: str) -> List[Dict[str, Any]]:
-    """Clean and parse JSON output string from Gemini."""
-    json_text = json_text.strip()
-    if json_text.startswith("```json"):
-        json_text = json_text[7:]
-    if json_text.startswith("```"):
-        json_text = json_text[3:]
-    if json_text.endswith("```"):
-        json_text = json_text[:-3]
-    json_text = json_text.strip()
+    model_name = get_working_model_name(GEMINI_MODEL)
     
     try:
-        data = json.loads(json_text)
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        generation_config = {
+            "response_mime_type": "application/json",
+            "temperature": 0.1,
+            "max_output_tokens": 3000
+        }
+        
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config=generation_config
+        )
+        
+        max_retries = 3
+        base_delay = 4
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"Calling Gemini API ({model_name}) - Attempt {attempt + 1}/{max_retries}...")
+                
+                response = model.generate_content(
+                    prompt,
+                    request_options={"timeout": 120}
+                )
+                
+                if response and response.text:
+                    res_text = response.text.strip()
+                    print(f"Gemini response length: {len(res_text)} characters")
+                    return res_text
+                else:
+                    print("ERROR: Gemini returned empty response text")
+                    return "[]"
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                if "504" in error_str or "deadline" in error_str or "503" in error_str or "502" in error_str:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Transient error ({e}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    print(f"Gemini API Fatal Error: {e}")
+                    return "[]"
+        
+        print("ERROR: Max retries exceeded for Gemini API")
+        return "[]"
+        
+    except Exception as e:
+        print(f"Gemini API configuration error: {e}")
+        return "[]"
+
+# ============================================================================
+# CSV MERGE & GENERATION
+# ============================================================================
+
+def clean_json_response(json_text: str) -> List[Dict[str, Any]]:
+    """Clean markdown artifacts and parse JSON safely."""
+    text = json_text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    
+    try:
+        data = json.loads(text)
         if isinstance(data, list):
             return data
+        return []
     except json.JSONDecodeError as e:
-        print(f"JSON Parse Error: {e}")
-    
-    return []
+        print(f"Failed to parse batch JSON response: {e}")
+        return []
 
-def write_csv(data: List[Dict[str, Any]]):
-    """Write sanitized records to CSV."""
+def parse_and_write_csv(entries: List[Dict[str, Any]]):
+    """Write parsed threat entries to CSV."""
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
     
-    # Deduplicate entries across batches by (name, ring, quadrant)
-    deduped = {}
-    for entry in data:
-        key = (entry.get("name", "").strip(), entry.get("ring", "").strip(), entry.get("quadrant", "").strip())
-        if not key[0]:
-            continue
-        if key not in deduped:
-            deduped[key] = {
-                "name": entry.get("name", "Unknown"),
-                "ring": entry.get("ring", "ROTW"),
-                "quadrant": entry.get("quadrant", "All Others"),
-                "isNew": True,
-                "description": entry.get("description", "")
-            }
-        else:
-            # Append new incident description if duplicate key
-            existing_desc = deduped[key]["description"]
-            new_desc = entry.get("description", "")
-            if new_desc and new_desc not in existing_desc:
-                deduped[key]["description"] = f"{existing_desc}<br><br><hr><br>{new_desc}"
-
-    final_rows = list(deduped.values())
-    
-    with open(CSV_PATH, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        for row in final_rows:
-            writer.writerow(row)
+    try:
+        with open(CSV_PATH, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+            writer.writeheader()
             
-    print(f"Successfully wrote {len(final_rows)} threat rows to {CSV_PATH}")
+            written_count = 0
+            for entry in entries:
+                row = {
+                    "name": entry.get("name", "Unknown Threat"),
+                    "ring": entry.get("ring", "ROTW"),
+                    "quadrant": entry.get("quadrant", "All Others"),
+                    "isNew": entry.get("isNew", True),
+                    "description": entry.get("description", "")
+                }
+                writer.writerow(row)
+                written_count += 1
+                
+        print(f"Successfully wrote {written_count} threat rows to {CSV_PATH}")
+        
+    except Exception as e:
+        print(f"ERROR writing CSV file: {e}")
 
 # ============================================================================
 # MAIN EXECUTION
@@ -350,56 +378,91 @@ def main():
     print("Maritime Cyber Threat Intelligence CSV Generator")
     print("=" * 60)
     
-    instruction_date = datetime.now()
-    start_date = instruction_date - timedelta(days=7)
-    instruction_date_str = instruction_date.strftime("%Y-%m-%d")
+    # Calculate dates
+    now = datetime.now()
+    start_date = now - timedelta(days=7)
+    instruction_date_str = now.strftime("%Y-%m-%d")
+    day_of_week = now.strftime("%A")
     start_date_str = start_date.strftime("%Y-%m-%d")
     
-    print(f"Time window: {start_date_str} to {instruction_date_str}\n")
+    print(f"Time window: {start_date_str} to {instruction_date_str} ({day_of_week})")
+    print()
     
     # Step 1: Load existing threats
     print("Step 1: Loading existing threats...")
     existing_threats = load_existing_threats()
     print()
     
-    # Step 2: Search URLs
+    # Step 2: Search Brave for URLs
     print("Step 2: Searching for threat intelligence URLs...")
     urls = get_all_urls()
     
     if not urls:
         print("No URLs found. Writing empty CSV.")
-        write_csv([])
+        parse_and_write_csv([])
         return
     print()
     
-    # Step 3: Fetch articles in batches
-    print("Step 3: Fetching article text in batches...")
-    batches = fetch_all_articles_batched(urls, batch_size=ARTICLES_PER_GEMINI_BATCH)
+    # Step 3: Fetch article texts
+    print("Step 3: Fetching article texts...")
+    articles = fetch_all_articles(urls, instruction_date_str)
     
-    if not batches:
-        print("No article text retrieved. Writing empty CSV.")
-        write_csv([])
+    if not articles:
+        print("No article content retrieved. Writing empty CSV.")
+        parse_and_write_csv([])
         return
     print()
     
-    # Step 4: Process batches through Gemini
-    print("Step 4: Calling Gemini API for each batch...")
-    all_extracted_entries = []
+    # Step 4: Batch articles and Call Gemini
+    print("Step 4: Grouping articles into batches and calling Gemini API...")
     
-    for batch_idx, jina_text_batch in enumerate(batches, 1):
-        print(f"\n--- Processing Batch {batch_idx}/{len(batches)} ---")
-        prompt = generate_prompt(instruction_date_str, start_date_str, existing_threats, jina_text_batch)
-        json_response = call_gemini_single_batch(prompt)
+    # Group articles into batches of ARTICLES_PER_BATCH (e.g. 3)
+    batches = [articles[i:i + ARTICLES_PER_BATCH] for i in range(0, len(articles), ARTICLES_PER_BATCH)]
+    print(f"Grouped {len(articles)} articles into {len(batches)} batches for Gemini.")
+    print()
+    
+    all_extracted_threats: List[Dict[str, Any]] = []
+    
+    for idx, batch in enumerate(batches, 1):
+        print(f"--- Processing Batch {idx}/{len(batches)} ({len(batch)} articles) ---")
         
-        entries = parse_json_response(json_response)
-        print(f"Batch {batch_idx} extracted {len(entries)} entries.")
-        all_extracted_entries.extend(entries)
+        # Build batch text block with article publication/fetch context
+        batch_text_blocks = []
+        for a_idx, item in enumerate(batch, 1):
+            batch_text_blocks.append(
+                f"--- SOURCE {a_idx} [URL: {item['url']} | Report Context Date: {item['fetched_date']}] ---\n{item['text']}"
+            )
+        
+        combined_batch_text = "\n\n".join(batch_text_blocks)
+        
+        prompt = generate_prompt(
+            instruction_date_str, 
+            day_of_week, 
+            start_date_str, 
+            existing_threats, 
+            combined_batch_text
+        )
+        
+        json_resp = call_gemini(prompt)
+        extracted = clean_json_response(json_resp)
+        
+        print(f"Batch {idx} extracted {len(extracted)} entries.")
+        all_extracted_threats.extend(extracted)
+        print()
     
-    print()
-    
-    # Step 5: Merge and write CSV
+    # Step 5: Deduplicate and Write CSV
     print("Step 5: Merging results and writing CSV...")
-    write_csv(all_extracted_entries)
+    
+    # Deduplicate extracted results by threat name
+    unique_entries = []
+    seen_names = set()
+    for entry in all_extracted_threats:
+        name = entry.get("name", "").strip()
+        if name and name.lower() not in seen_names:
+            seen_names.add(name.lower())
+            unique_entries.append(entry)
+            
+    parse_and_write_csv(unique_entries)
     print()
     
     print("=" * 60)
