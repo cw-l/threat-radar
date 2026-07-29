@@ -7,6 +7,7 @@ Automated weekly threat radar update using Brave Search + Jina Reader + Gemini A
 import os
 import csv
 import json
+import time
 import requests
 from datetime import datetime, timedelta
 from typing import List, Dict
@@ -25,14 +26,15 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 CSV_PATH = "data/maritime_latest.csv"
 CSV_HEADERS = ["name", "ring", "quadrant", "isNew", "description"]
 
-# Search configuration
+# Search & Text configuration
 SEARCH_QUERIES = [
     'site:cisa.gov OR site:dragos.com OR site:recordedfuture.com "maritime" OR "shipping" OR "port" cyber threat',
     'site:singcert.gov.sg OR site:maritimeisac.com "cyber attack" OR "threat actor"',
     '"maritime cyber" OR "port cyber" OR "shipping cyber" ransomware OR APT OR breach'
 ]
 MAX_SEARCH_RESULTS_PER_QUERY = 5
-MAX_JINA_TEXT_LENGTH = 8000  # Limit per article to avoid token limits
+MAX_JINA_TEXT_LENGTH = 6000      # Limit per individual article
+MAX_TOTAL_JINA_LENGTH = 30000    # Global cap on combined text to prevent API timeouts (504s)
 
 # ============================================================================
 # EXISTING THREATS DEDUPLICATION
@@ -126,7 +128,7 @@ def fetch_article_text(url: str) -> str:
         
         if response.status_code == 200:
             text = response.text
-            # Limit text length to avoid token limits
+            # Limit individual article length
             if len(text) > MAX_JINA_TEXT_LENGTH:
                 text = text[:MAX_JINA_TEXT_LENGTH] + "\n\n[TRUNCATED]"
             return text
@@ -139,15 +141,26 @@ def fetch_article_text(url: str) -> str:
         return ""
 
 def fetch_all_articles(urls: List[str]) -> str:
-    """Fetch all articles and combine into single text block."""
+    """Fetch all articles and combine into single text block with global length capping."""
     articles = []
+    total_length = 0
     
     for i, url in enumerate(urls, 1):
+        if total_length >= MAX_TOTAL_JINA_LENGTH:
+            print(f"Reached global article text cap ({MAX_TOTAL_JINA_LENGTH} chars). Skipping remaining URLs.")
+            break
+            
         print(f"Fetching article {i}/{len(urls)}: {url}")
         text = fetch_article_text(url)
         
         if text:
+            # Enforce global combined length cap to prevent oversized prompts
+            if total_length + len(text) > MAX_TOTAL_JINA_LENGTH:
+                remaining_budget = MAX_TOTAL_JINA_LENGTH - total_length
+                text = text[:remaining_budget] + "\n\n[TRUNCATED DUE TO GLOBAL SIZE CAP]"
+            
             articles.append(f"--- SOURCE {i}: {url} ---\n{text}")
+            total_length += len(text)
     
     combined = "\n\n".join(articles)
     print(f"Combined article text length: {len(combined)} characters")
@@ -261,7 +274,7 @@ RAW THREAT INTELLIGENCE REPORTS TO ANALYZE:
     return prompt
 
 def call_gemini(prompt: str) -> str:
-    """Call Gemini API with JSON mode enforcement."""
+    """Call Gemini API with JSON mode, token capping, extended timeout, and exponential backoff retry logic."""
     if not GEMINI_API_KEY:
         print("ERROR: GEMINI_API_KEY not set")
         return "[]"
@@ -269,10 +282,11 @@ def call_gemini(prompt: str) -> str:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # Configure model with JSON mode
+        # 1. Enforce JSON mode and token cap for fast, bounded generation
         generation_config = {
             "response_mime_type": "application/json",
-            "temperature": 0.1  # Low temperature for deterministic output
+            "temperature": 0.1,         # Low temperature for deterministic output
+            "max_output_tokens": 2500   # Prevents runaway output generation and 504 timeouts
         }
         
         model = genai.GenerativeModel(
@@ -280,18 +294,49 @@ def call_gemini(prompt: str) -> str:
             generation_config=generation_config
         )
         
-        print("Calling Gemini API...")
-        response = model.generate_content(prompt)
+        # 2. Configure retries with exponential backoff
+        max_retries = 3
+        base_delay = 5  # Initial backoff delay in seconds (5s, 10s, 20s)
         
-        if response.text:
-            print(f"Gemini response length: {len(response.text)} characters")
-            return response.text
-        else:
-            print("ERROR: Gemini returned empty response")
-            return "[]"
-    
+        for attempt in range(max_retries):
+            try:
+                print(f"Calling Gemini API (Attempt {attempt + 1}/{max_retries})...")
+                
+                # 3. Increase client-side timeout to 120s
+                response = model.generate_content(
+                    prompt,
+                    request_options={"timeout": 120}
+                )
+                
+                if response.text:
+                    print(f"Gemini response length: {len(response.text)} characters")
+                    return response.text
+                else:
+                    print("ERROR: Gemini returned empty response")
+                    return "[]"
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                # Detect transient network/gateway/timeout error codes
+                transient_keywords = ["504", "deadline", "503", "502", "429", "resourceexhausted", "unavailable", "timeout"]
+                is_transient = any(kw in error_str for kw in transient_keywords)
+                
+                if is_transient and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # 5s, 10s, 20s
+                    print(f"Transient error detected ({e}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    # Non-transient error or retries exhausted
+                    print(f"Gemini API error on attempt {attempt + 1}: {e}")
+                    if not is_transient:
+                        # Fail fast for client configuration or auth errors
+                        return "[]"
+        
+        print("ERROR: Max retries exceeded for Gemini API")
+        return "[]"
+        
     except Exception as e:
-        print(f"Gemini API error: {e}")
+        print(f"Gemini API configuration error: {e}")
         return "[]"
 
 # ============================================================================
@@ -299,12 +344,14 @@ def call_gemini(prompt: str) -> str:
 # ============================================================================
 
 def parse_and_write_csv(json_text: str):
-    """Parse JSON response and write to CSV."""
+    """Parse JSON response and write to CSV with robust cleaning."""
     
-    # Clean up any accidental markdown
+    # Clean up accidental markdown code fences
     json_text = json_text.strip()
-    if json_text.startswith("```json"):
-        json_text = json_text[7:]
+    if json_text.startswith("```"):
+        first_newline = json_text.find("\n")
+        if first_newline != -1:
+            json_text = json_text[first_newline + 1:]
     if json_text.endswith("```"):
         json_text = json_text[:-3]
     json_text = json_text.strip()
@@ -327,7 +374,7 @@ def parse_and_write_csv(json_text: str):
             writer.writeheader()
             
             for entry in data:
-                # Validate and clean entry
+                # Validate and clean entry fields
                 row = {
                     "name": entry.get("name", "Unknown"),
                     "ring": entry.get("ring", "ROTW"),
@@ -341,9 +388,9 @@ def parse_and_write_csv(json_text: str):
         
     except json.JSONDecodeError as e:
         print(f"ERROR: Failed to parse JSON: {e}")
-        print(f"Raw response: {json_text[:500]}")
+        print(f"Raw response snippet: {json_text[:300]}...")
         
-        # Write empty CSV with headers
+        # Fallback: Write empty CSV with headers
         os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
         with open(CSV_PATH, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
