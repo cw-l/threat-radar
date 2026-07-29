@@ -3,6 +3,9 @@ name: Deploy Radar to Pages
 on:
   push:
     branches: ["master", "main"]
+    paths-ignore:
+      - 'scripts/generate_threat_profile.py'
+      - '.github/workflows/weekly-threat-radar.yml'
   workflow_dispatch:
 
 permissions:
