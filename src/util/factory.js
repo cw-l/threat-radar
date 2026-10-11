@@ -335,7 +335,7 @@ const Factory = function () {
 
     let paramId = getDocumentOrSheetId()
     if (!paramId) {
-      paramId = 'https://raw.githubusercontent.com/cw-l/threat-radar/refs/heads/master/data/maritime_may_2026.csv'
+      paramId = `${window.location.origin}${process.env.ASSET_PATH}data/maritime_may_2026.csv`
     }
     
     if (paramId && paramId.endsWith('.csv')) {

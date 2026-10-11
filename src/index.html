@@ -1,78 +1,82 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style>
-      .radar-legends, .legend, #footer { display: none !important; }
 
-      .hero-banner__subtitle-text, 
-      .hero-banner__wrapper p, 
-      .radar-subtitle { 
-        display: none !important; 
-      }
-    </style>
-    <link href="/images/favicon.ico" rel="icon" />
-  </head>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    .radar-legends,
+    .legend,
+    #footer {
+      display: none !important;
+    }
 
-  <body>
-    <header class="input-sheet__logo">
-      <div>
-        <span>Powered by</span>BCF Security
-      </div>
-    </header>
-    <div class="hero-banner">
-      <div class="hero-banner__wrapper">
-        <h1 class="hero-banner__title-text">Threat Actors Radar (TAR)</h1>
-      </div>
+    .hero-banner__subtitle-text,
+    .hero-banner__wrapper p,
+    .radar-subtitle {
+      display: none !important;
+    }
+  </style>
+  <link href="/images/favicon.ico" rel="icon" />
+</head>
+
+<body>
+  <header class="input-sheet__logo">
+    <div>
+      <span>Powered by</span>BCF Security
     </div>
-    <main>
-      <div class="helper-description home-page">
-        <p>
-          TAR helps track threat actors relevant to your organisation so that you prioritise your investments where it matters.
-        </p>
-        <span class="loader-text">
-          <span class="loader-text__title">Building your radar...</span>
-          <p>Your Threat Radar will be available in just a few seconds</p>
-          <div class="loader-wrapper">
-            <div style="animation-delay: 0s"></div>
-            <div style="animation-delay: 0.25s"></div>
-            <div style="animation-delay: 0.75s"></div>
-            <div style="animation-delay: 0.5s"></div>
-          </div>
-        </span>
-        <p class="landing-disclaimer-text show-disclaimer">
-          <b>Disclaimer:</b> All data presented "as-is" for informational purposes. No warranties or guarantees of accuracy. Use at your own risk. The author assume zero liability for any errors, omissions, or consequences resulting from the use of this information.
-        </p>
-      </div>
-      <div id="error-container" class="error-container home-page"></div>
-      <div class="input-sheet-form home-page">
-        <p>
-          Enter the URL of your CSV or JSON file below…
-        </p>
-        <form id="byor-form-submit" method="get">
-          <input
-            type="text"
-            name="documentId"
-            id="document-input"
-            placeholder="e.g. hosted CSV/JSON file URL"
-            required=""
-          />
-          <input type="submit" value="Build my threat radar" />
-        </form>
-      </div>
-      <div class="graph-header"></div>
-      <div id="radar">
-        <p class="no-blip-text">
-          There are no blips on this quadrant, please check your CSV/JSON file.
-        </p>
-      </div>
-      <div class="all-quadrants-mobile show-all-quadrants-mobile"></div>
-    </main>
-    <footer class="home-page">
-      <p class="agree-terms">
-        TAR is built on top of <a href="https://www.thoughtworks.com/radar">Thoughtworks Radar</a>.
+  </header>
+  <div class="hero-banner">
+    <div class="hero-banner__wrapper">
+      <h1 class="hero-banner__title-text">Threat Tracker (TT)</h1>
+    </div>
+  </div>
+  <main>
+    <div class="helper-description home-page">
+      <p>
+        TT helps track threat actors relevant to your organisation so that you prioritise your investments where it
+        matters.
       </p>
-    </footer>
-  </body>
+      <span class="loader-text">
+        <span class="loader-text__title">Building your tracker...</span>
+        <p>TT will be available in just a few seconds</p>
+        <div class="loader-wrapper">
+          <div style="animation-delay: 0s"></div>
+          <div style="animation-delay: 0.25s"></div>
+          <div style="animation-delay: 0.75s"></div>
+          <div style="animation-delay: 0.5s"></div>
+        </div>
+      </span>
+      <p class="landing-disclaimer-text show-disclaimer">
+        <b>Disclaimer:</b> All data presented "as-is" for informational purposes. No warranties or guarantees of
+        accuracy. Use at your own risk. The author assume zero liability for any errors, omissions, or consequences
+        resulting from the use of this information.
+      </p>
+    </div>
+    <div id="error-container" class="error-container home-page"></div>
+    <div class="input-sheet-form home-page">
+      <p>
+        Enter the URL of your CSV or JSON file below…
+      </p>
+      <form id="byor-form-submit" method="get">
+        <input type="text" name="documentId" id="document-input" placeholder="e.g. hosted CSV/JSON file URL"
+          required="" />
+        <input type="submit" value="Build my threat radar" />
+      </form>
+    </div>
+    <div class="graph-header"></div>
+    <div id="radar">
+      <p class="no-blip-text">
+        There are no blips on this quadrant, please check your CSV/JSON file.
+      </p>
+    </div>
+    <div class="all-quadrants-mobile show-all-quadrants-mobile"></div>
+  </main>
+  <footer class="home-page">
+    <p class="agree-terms">
+      TT is built on top of <a href="https://www.thoughtworks.com/radar">Thoughtworks Radar</a>.
+    </p>
+  </footer>
+</body>
+
 </html>

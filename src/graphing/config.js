@@ -2,11 +2,11 @@ const quadrantSize = 512
 const quadrantGap = 32
 
 const getQuadrants = () => {
-  return JSON.parse(process.env.QUADRANTS || null) || ['Techniques', 'Platforms', 'Tools', 'Languages & Frameworks']
+  return JSON.parse(process.env.QUADRANTS || null) || ['CIIs', 'My-Industry', 'My-Suppliers', 'All Others']
 }
 
 const getRings = () => {
-  return JSON.parse(process.env.RINGS || null) || ['Adopt', 'Trial', 'Assess', 'Caution']
+  return JSON.parse(process.env.RINGS || null) || ['Singapore', 'Southeast Asia', 'Asia', 'ROTW']
 }
 
 const isBetween = (number, startNumber, endNumber) => {

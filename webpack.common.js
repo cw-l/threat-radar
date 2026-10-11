@@ -7,6 +7,7 @@ const args = require('yargs').argv
 
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const MiniCssExtractPlugin = require('mini-css-extract-plugin')
+const CopyWebpackPlugin = require('copy-webpack-plugin')
 
 const env = args.envFile
 if (env) {
@@ -25,7 +26,13 @@ const plugins = [
     chunks: ['main'],
     inject: 'body',
   }),
+  new CopyWebpackPlugin({
+    patterns: [
+      { from: 'data', to: 'data' }
+    ],
+  }),
   new webpack.DefinePlugin({
+    'process.env.ASSET_PATH': JSON.stringify(ASSET_PATH),
     'process.env.CLIENT_ID': JSON.stringify(process.env.CLIENT_ID),
     'process.env.API_KEY': JSON.stringify(process.env.API_KEY),
     'process.env.ENABLE_GOOGLE_AUTH': JSON.stringify(process.env.ENABLE_GOOGLE_AUTH),
