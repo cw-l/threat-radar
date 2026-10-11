@@ -35,7 +35,8 @@ const plotRadar = function (title, blips, currentRadarName, alternativeRadars) {
   if (title.endsWith('.json')) {
     title = title.substring(0, title.length - 5)
   }
-  document.title = title
+
+  setDocumentTitle()
   d3.selectAll('.loading').remove()
 
   blips = blips.map((b) => ({
@@ -101,8 +102,7 @@ function validateInputQuadrantOrRingName(allQuadrantsOrRings, quadrantOrRing) {
 }
 
 const plotRadarGraph = function (title, blips, currentRadarName, alternativeRadars) {
-  document.title = title.replace(/.(csv|json)$/, '')
-
+  setDocumentTitle()
   d3.selectAll('.loading').remove()
 
   const ringMap = graphConfig.rings.reduce((allRings, ring, index) => {
@@ -373,7 +373,7 @@ const Factory = function () {
 }
 
 function setDocumentTitle() {
-  document.title = 'Build your own Radar'
+  document.title = 'Threat Tracker'
 }
 
 function plotLoading(content) {
@@ -387,7 +387,7 @@ function plotLoading(content) {
     plotLogo(content)
 
     var bannerText =
-      '<h1>Building your radar...</h1><p>Your Technology Radar will be available in just a few seconds</p>'
+      '<h1>Building your tracker...</h1><p>TT will be available in just a few seconds</p>'
     plotBanner(content, bannerText)
     plotFooter(content)
   } else {
@@ -451,7 +451,7 @@ function plotForm(content) {
     .attr('placeholder', 'e.g. https://docs.google.com/spreadsheets/d/<sheetid> or hosted CSV/JSON file')
     .attr('required', '')
 
-  form.append('button').attr('type', 'submit').append('a').attr('class', 'button').text('Build my radar')
+  form.append('button').attr('type', 'submit').append('a').attr('class', 'button').text('Build TT')
 
   form.append('p').html("<a href='https://www.thoughtworks.com/radar/byor#guide'>Need help?</a>")
 }
@@ -533,7 +533,7 @@ function plotUnauthorizedErrorMessage() {
 
     plotLogo(content)
 
-    const bannerText = '<div><h1>Build your own radar</h1></div>'
+    const bannerText = '<div><h1>Build your own Threat Tracker (TT)</h1></div>'
 
     plotBanner(content, bannerText)
 

@@ -50,6 +50,7 @@ module.exports = {
   },
   output: {
     path: buildPath,
+    clean: true,
     publicPath: ASSET_PATH,
     filename: '[name].[contenthash].js',
     assetModuleFilename: 'images/[name][ext]',
