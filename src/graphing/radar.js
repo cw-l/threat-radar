@@ -24,7 +24,7 @@ const {
 const { renderQuadrantTables } = require('./components/quadrantTables')
 const { addQuadrantNameInPdfView, addRadarLinkInPdfView } = require('./pdfPage')
 
-const { constructSheetUrl } = require('../util/urlUtils')
+const { constructSheetUrl, getDocumentOrSheetId } = require('../util/urlUtils')
 const { toRadian } = require('../util/mathUtils')
 
 const MIN_BLIP_WIDTH = 12
@@ -782,8 +782,52 @@ const Radar = function (size, radar) {
 
     if (featureToggles.UIRefresh2022) {
       renderQuadrantSubnav(radarHeader, quadrants, renderFullRadar)
-      if (featureToggles.normalizeRingNameHoldToCaution) addDisclaimerText(radarHeader)
-      renderSearch(radarHeader, quadrants)
+
+      // same classes as the landing page -> same width and spacing
+      const intro = radarHeader.append('div').classed('helper-description', true)
+      intro
+        .append('p')
+        .text(
+          'TT helps track threat actors relevant to your organisation so that you prioritise your investments where it matters.',
+        )
+      intro
+        .append('p')
+        .classed('landing-disclaimer-text show-disclaimer', true)
+        .html(
+          '<b>Disclaimer:</b> All data presented "as-is" for informational purposes. No warranties or guarantees of accuracy. Use at your own risk. The author assume zero liability for any errors, omissions, or consequences resulting from the use of this information.',
+        )
+
+      // ---- dataset dropdown ----
+      const base = `${window.location.origin}${process.env.ASSET_PATH}data/`
+      const current = getDocumentOrSheetId()
+
+      const picker = radarHeader.append('div').classed('input-sheet-form', true)
+      picker.append('p').text('Select your threat intel:')
+
+      const box = picker
+        .append('div')
+        .style('display', 'flex')
+        .style('flex-direction', 'column')
+        .style('align-items', 'center')
+        .style('margin-bottom', '18px')
+
+      const select = box.append('select').classed('dataset-switcher__select', true)
+
+      box
+        .append('button')
+        .classed('dataset-switcher__button', true)
+        .text('Run Threat Tracker')
+        .on('click', () => {
+          window.location.search = `?documentId=${encodeURIComponent(select.property('value'))}`
+        })
+
+      d3.json(`${base}files.json`).then((files) => {
+        files.forEach((f) =>
+          select.append('option').attr('value', base + f).property('selected', base + f === current).text(f),
+        )
+      })
+      // ---- end dropdown ----
+      
       renderAlternativeRadars(radarFooter, alternatives, currentSheet)
       renderQuadrantTables(quadrants, rings)
       renderButtons(radarFooter)

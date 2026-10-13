@@ -28,7 +28,8 @@ const plugins = [
   }),
   new CopyWebpackPlugin({
     patterns: [
-      { from: 'data', to: 'data' }
+      { from: 'data', to: 'data' },
+      { from: 'public/data', to: 'data' },
     ],
   }),
   new webpack.DefinePlugin({

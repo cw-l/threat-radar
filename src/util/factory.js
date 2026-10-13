@@ -319,7 +319,9 @@ const Factory = function () {
     window.addEventListener('keydown', function (e) {
       if (featureToggles.UIRefresh2022 && e.key === '/') {
         const inputElement =
-          d3.select('input.search-container__input').node() || d3.select('.input-sheet-form input').node()
+          //d3.select('input.search-container__input').node() || d3.select('.input-sheet-form input').node()
+          d3.select('input.search-container__input').node() ||
+          d3.select('.input-sheet-form input, .input-sheet-form select').node()
 
         if (document.activeElement !== inputElement) {
           e.preventDefault()
@@ -334,9 +336,9 @@ const Factory = function () {
     const domainName = DomainName(window.location.search.substring(1))
 
     let paramId = getDocumentOrSheetId()
-    if (!paramId) {
-      paramId = `${window.location.origin}${process.env.ASSET_PATH}data/maritime_may_2026.csv`
-    }
+    //if (!paramId) {
+    //  paramId = `${window.location.origin}${process.env.ASSET_PATH}data/maritime_may_2026.csv`
+    //}
     
     if (paramId && paramId.endsWith('.csv')) {
       sheet = CSVDocument(paramId)
@@ -366,6 +368,7 @@ const Factory = function () {
       }
 
       setDocumentTitle()
+      plotDataDropdown()
     }
   }
 
@@ -374,6 +377,43 @@ const Factory = function () {
 
 function setDocumentTitle() {
   document.title = 'Threat Tracker'
+}
+
+//function plotDataDropdown() {
+//  const input = document.querySelector('.input-sheet-form input')
+//  if (!input) return
+
+//  const files = ['maritime_may_2026.csv', 'bnf_may_2026.csv'] // add your filenames here
+
+// const select = document.createElement('select')
+//  select.name = input.name
+//  select.className = input.className
+//  files.forEach((f) => select.appendChild(new Option(f, `${window.location.origin}${process.env.ASSET_PATH}data/${f}`)))
+//  input.replaceWith(select)
+//}
+
+async function plotDataDropdown() {
+  const input = document.querySelector('.input-sheet-form input')
+  if (!input) return
+
+  try {
+    // Fetch the list of files dynamically from your public data folder
+    const response = await fetch(`${window.location.origin}${process.env.ASSET_PATH || '/'}data/files.json`)
+    const files = await response.json()
+
+    const select = document.createElement('select')
+    select.name = input.name
+    select.id = 'document-input'
+    select.className = input.className
+
+    files.forEach((f) => {
+      select.appendChild(new Option(f, `${window.location.origin}${process.env.ASSET_PATH || '/'}data/${f}`))
+    })
+
+    input.replaceWith(select)
+  } catch (error) {
+    console.error('Could not load file manifest:', error)
+  }
 }
 
 function plotLoading(content) {
@@ -451,7 +491,7 @@ function plotForm(content) {
     .attr('placeholder', 'e.g. https://docs.google.com/spreadsheets/d/<sheetid> or hosted CSV/JSON file')
     .attr('required', '')
 
-  form.append('button').attr('type', 'submit').append('a').attr('class', 'button').text('Build TT')
+  form.append('button').attr('type', 'submit').append('a').attr('class', 'button').text('Run TT')
 
   form.append('p').html("<a href='https://www.thoughtworks.com/radar/byor#guide'>Need help?</a>")
 }
