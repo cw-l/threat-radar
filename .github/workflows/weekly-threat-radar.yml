@@ -9,7 +9,8 @@ jobs:
   update-csv:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to commit and push the CSV back to the repo
+      contents: write  # Required to commit and push the CSV back to the repo
+      actions: write   # lets this job start the deploy workflow
     
     steps:
       - name: Checkout repository
@@ -35,13 +36,32 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: python scripts/generate_threat_profile.py
 
+      - name: Create dated copy and update file list
+        run: |
+          STAMP=$(date -u +%Y%b%d)              # e.g. 2026Oct14
+          NEW="maritime-${STAMP}.csv"
+          cp data/maritime_latest.csv "data/${NEW}"
+          mkdir -p public/data
+          [ -f public/data/files.json ] || echo '[]' > public/data/files.json
+          jq --arg f "$NEW" 'if index($f) then . else [$f] + . end' \
+            public/data/files.json > /tmp/files.json
+          mv /tmp/files.json public/data/files.json
+          echo "NEW=${NEW}" >> "$GITHUB_ENV"
+          echo "STAMP=${STAMP}" >> "$GITHUB_ENV"
+
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-      - name: Commit and push updated CSV
+
+      - name: Commit and push
         run: |
-          git add data/maritime_latest.csv
-          git diff --staged --quiet || git commit -m "chore: weekly maritime threat radar update"
+          git add data/maritime_latest.csv "data/${NEW}" public/data/files.json
+          git diff --staged --quiet || git commit -m "chore: weekly maritime threat radar update ${STAMP}"
+          git pull --rebase
           git push
+
+      - name: Trigger deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml
